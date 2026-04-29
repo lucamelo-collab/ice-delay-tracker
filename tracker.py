@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC")
 THRESHOLD_MINUTES = int(os.environ.get("THRESHOLD_MINUTES", "20"))
