@@ -73,10 +73,23 @@ def get_journeys(from_station: str, to_station: str):
         "stopovers": "true",
     }
 
-    response = requests.get(f"{API_BASE}/journeys", params=params, timeout=30)
-    response.raise_for_status()
+    try:
+        response = requests.get(f"{API_BASE}/journeys", params=params, timeout=30)
 
-    return response.json().get("journeys", [])
+        if response.status_code == 503:
+            print("Datenquelle ist gerade nicht erreichbar: HTTP 503 Service Unavailable.")
+            return []
+
+        if response.status_code == 429:
+            print("Datenquelle hat zu viele Anfragen gemeldet: HTTP 429 Too Many Requests.")
+            return []
+
+        response.raise_for_status()
+        return response.json().get("journeys", [])
+
+    except requests.exceptions.RequestException as error:
+        print(f"Fehler beim Abruf der Bahndaten: {error}")
+        return []
 
 
 def check_route(route):
