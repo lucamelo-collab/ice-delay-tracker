@@ -2,8 +2,11 @@ name: ICE Delay Tracker
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   track:
@@ -15,6 +18,8 @@ jobs:
     steps:
       - name: Repository auschecken
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Python installieren
         uses: actions/setup-python@v5
@@ -30,3 +35,16 @@ jobs:
           THRESHOLD_MINUTES: "20"
           TEST_NOTIFICATION: "false"
         run: python tracker.py
+
+      - name: Gemeldete Züge speichern
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          if [ -n "$(git status --porcelain notified_trains.json)" ]; then
+            git add notified_trains.json
+            git commit -m "Update notified trains"
+            git push
+          else
+            echo "Keine Änderungen an notified_trains.json"
+          fi
