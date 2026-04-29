@@ -1,0 +1,28 @@
+name: ICE Delay Tracker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python installieren
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: ICE-Verspätungen prüfen
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          THRESHOLD_MINUTES: "20"
+        run: python tracker.py
