@@ -143,7 +143,19 @@ def get_arrivals(station_id):
     if not data:
         return []
 
-    return data
+    if isinstance(data, list):
+        return data
+
+    if isinstance(data, dict):
+        arrivals = data.get("arrivals")
+        if isinstance(arrivals, list):
+            return arrivals
+
+        print(f"Unerwartetes Antwortformat bei arrivals: {list(data.keys())}")
+        return []
+
+    print(f"Unerwartetes Antwortformat bei arrivals: {type(data)}")
+    return []
 
 
 def get_trip(trip_id):
@@ -163,6 +175,9 @@ def get_trip(trip_id):
 
 
 def is_ice(arrival):
+    if not isinstance(arrival, dict):
+        return False
+
     line = arrival.get("line") or {}
     line_name = line.get("name") or ""
     product = line.get("product") or ""
@@ -217,6 +232,9 @@ def check_arrival_board(check, notified_ids):
     now = datetime.now(timezone.utc)
 
     for arrival in arrivals:
+        if not isinstance(arrival, dict):
+            continue
+
         if not is_ice(arrival):
             continue
 
