@@ -1,6 +1,0 @@
-ice-delay-tracker/
-├─ tracker.py
-├─ requirements.txt
-└─ .github/
-   └─ workflows/
-      └─ tracker.yml
