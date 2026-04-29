@@ -51,6 +51,7 @@ def send_notification(title: str, message: str):
 def parse_iso(value):
     if not value:
         return None
+
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
@@ -74,7 +75,11 @@ def get_journeys(from_station: str, to_station: str):
     }
 
     try:
-        response = requests.get(f"{API_BASE}/journeys", params=params, timeout=30)
+        response = requests.get(
+            f"{API_BASE}/journeys",
+            params=params,
+            timeout=30,
+        )
 
         if response.status_code == 503:
             print("Datenquelle ist gerade nicht erreichbar: HTTP 503 Service Unavailable.")
@@ -96,6 +101,8 @@ def check_route(route):
     journeys = get_journeys(route["from"], route["to"])
     alerts = []
 
+    now = datetime.now(timezone.utc)
+
     for journey in journeys:
         legs = journey.get("legs", [])
 
@@ -107,21 +114,35 @@ def check_route(route):
             if not product_name.startswith("ICE") and not name.startswith("ICE"):
                 continue
 
-            delay_seconds = leg.get("arrivalDelay")
+            planned_arrival = parse_iso(leg.get("plannedArrival"))
+            actual_arrival = parse_iso(leg.get("arrival"))
 
-            if delay_seconds is None:
+            if planned_arrival is None or actual_arrival is None:
+                print(f"{name}: Keine vollständigen Ankunftszeiten vorhanden.")
                 continue
 
+            # Wichtig:
+            # Keine Meldung für reine Zukunftsprognosen.
+            # Erst wenn die gemeldete Ankunftszeit erreicht oder überschritten ist,
+            # behandeln wir den Zug als angekommen.
+            if actual_arrival > now:
+                planned_text = planned_arrival.strftime("%H:%M")
+                actual_text = actual_arrival.strftime("%H:%M")
+
+                print(
+                    f"{name}: Noch nicht angekommen. "
+                    f"Geplant {planned_text}, prognostiziert {actual_text}."
+                )
+                continue
+
+            delay_seconds = (actual_arrival - planned_arrival).total_seconds()
             delay_minutes = round(delay_seconds / 60)
 
             if delay_minutes <= THRESHOLD_MINUTES:
                 continue
 
-            planned_arrival = parse_iso(leg.get("plannedArrival"))
-            actual_arrival = parse_iso(leg.get("arrival"))
-
-            planned_text = planned_arrival.strftime("%H:%M") if planned_arrival else "unbekannt"
-            actual_text = actual_arrival.strftime("%H:%M") if actual_arrival else "unbekannt"
+            planned_text = planned_arrival.strftime("%H:%M")
+            actual_text = actual_arrival.strftime("%H:%M")
 
             origin = leg.get("origin", {}).get("name", "unbekannt")
             destination = leg.get("destination", {}).get("name", "unbekannt")
@@ -130,9 +151,9 @@ def check_route(route):
                 f"{name}\n"
                 f"Strecke: {origin} → {destination}\n"
                 f"Überwachung: {route['label']}\n"
-                f"Verspätung bei Ankunft: {delay_minutes} Minuten\n"
-                f"Geplant: {planned_text}\n"
-                f"Aktuell/prognostiziert: {actual_text}"
+                f"Tatsächliche Verspätung bei Ankunft: {delay_minutes} Minuten\n"
+                f"Geplante Ankunft: {planned_text}\n"
+                f"Tatsächliche Ankunft: {actual_text}"
             )
 
             alerts.append(message)
@@ -144,7 +165,7 @@ def main():
     if TEST_NOTIFICATION:
         send_notification(
             "Test ICE Tracker",
-            "Testnachricht: Dein ICE-Verspätungstracker kann Benachrichtigungen aufs Handy senden."
+            "Testnachricht: Dein ICE-Verspätungstracker kann Benachrichtigungen aufs Handy senden.",
         )
         print("Testbenachrichtigung wurde gesendet.")
         return
@@ -157,12 +178,12 @@ def main():
         all_alerts.extend(route_alerts)
 
     if not all_alerts:
-        print(f"Keine ICE-Ankunft mit mehr als {THRESHOLD_MINUTES} Minuten Verspätung gefunden.")
+        print(f"Keine tatsächlich angekommenen ICEs mit mehr als {THRESHOLD_MINUTES} Minuten Verspätung gefunden.")
         return
 
     for alert in all_alerts:
         print(alert)
-        send_notification("ICE-Verspätung erkannt", alert)
+        send_notification("ICE tatsächlich verspätet angekommen", alert)
 
 
 if __name__ == "__main__":
