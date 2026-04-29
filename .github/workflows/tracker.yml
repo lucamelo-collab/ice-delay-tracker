@@ -25,4 +25,5 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           THRESHOLD_MINUTES: "20"
+          TEST_NOTIFICATION: "true"
         run: python tracker.py
