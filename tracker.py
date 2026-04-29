@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -13,14 +14,23 @@ TEST_NOTIFICATION = os.environ.get("TEST_NOTIFICATION", "false").lower() == "tru
 
 API_BASE = "https://v6.db.transport.rest"
 
+# Deutsche Zeitzone für korrekte Anzeige und Vergleichslogik
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
 # Station-IDs:
 # Kassel-Wilhelmshöhe: 8003200
 # Fulda: 8000115
 KASSEL_WILHELMSHOEHE = "8003200"
 FULDA = "8000115"
 
-LOOKBACK_MINUTES = 75
-RESULTS_PER_STATION = 40
+# Wie weit in die Vergangenheit die Ankunftstafel geprüft wird
+LOOKBACK_MINUTES = 90
+
+# Wie viele Ankünfte pro Bahnhof abgefragt werden
+RESULTS_PER_STATION = 60
+
+# Kleine Toleranz, damit ein Zug um 14:57 auch um 14:57 schon als angekommen gilt
+ARRIVAL_GRACE_MINUTES = 2
 
 NOTIFIED_FILE = Path("notified_trains.json")
 
@@ -45,13 +55,22 @@ ARRIVAL_CHECKS = [
 def parse_iso(value):
     if not value:
         return None
+
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def to_local(dt):
+    if not dt:
+        return None
+
+    return dt.astimezone(LOCAL_TZ)
 
 
 def format_time(dt):
     if not dt:
         return "unbekannt"
-    return dt.astimezone().strftime("%H:%M")
+
+    return to_local(dt).strftime("%H:%M")
 
 
 def send_notification(title: str, message: str):
@@ -68,6 +87,7 @@ def send_notification(title: str, message: str):
         },
         timeout=20,
     )
+
     response.raise_for_status()
 
 
@@ -86,10 +106,12 @@ def load_notified_ids():
 def save_notified_ids(notified_ids):
     # Damit die Datei nicht endlos wächst, behalten wir nur die letzten 500 Einträge.
     sorted_ids = sorted(notified_ids)[-500:]
+
     data = {
         "notified_ids": sorted_ids,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
     NOTIFIED_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -117,8 +139,8 @@ def get_json(url, params=None):
 
 
 def get_arrivals(station_id):
-    now = datetime.now(timezone.utc)
-    start_time = now - timedelta(minutes=LOOKBACK_MINUTES)
+    now_local = datetime.now(LOCAL_TZ)
+    start_time = now_local - timedelta(minutes=LOOKBACK_MINUTES)
 
     params = {
         "when": start_time.isoformat(),
@@ -140,6 +162,7 @@ def get_arrivals(station_id):
     }
 
     data = get_json(f"{API_BASE}/stops/{station_id}/arrivals", params=params)
+
     if not data:
         return []
 
@@ -148,6 +171,7 @@ def get_arrivals(station_id):
 
     if isinstance(data, dict):
         arrivals = data.get("arrivals")
+
         if isinstance(arrivals, list):
             return arrivals
 
@@ -229,7 +253,11 @@ def check_arrival_board(check, notified_ids):
 
     arrivals = get_arrivals(check["arrival_station_id"])
     alerts_sent = 0
-    now = datetime.now(timezone.utc)
+
+    now_local = datetime.now(LOCAL_TZ)
+    arrival_grace_limit = now_local + timedelta(minutes=ARRIVAL_GRACE_MINUTES)
+
+    print(f"Aktuelle Zeit Deutschland: {now_local.strftime('%H:%M:%S')}")
 
     for arrival in arrivals:
         if not isinstance(arrival, dict):
@@ -248,17 +276,29 @@ def check_arrival_board(check, notified_ids):
             print(f"{train_name}: Keine vollständigen Ankunftszeiten vorhanden.")
             continue
 
-        # Nur bereits angekommene bzw. zeitlich erreichte Ankünfte prüfen.
-        if actual_arrival > now:
+        planned_arrival_local = to_local(planned_arrival)
+        actual_arrival_local = to_local(actual_arrival)
+
+        # Keine reinen Zukunftsprognosen melden.
+        # Aber: Mit 2 Minuten Toleranz, damit ein Zug zur aktuellen Minute als angekommen gilt.
+        if actual_arrival_local > arrival_grace_limit:
             print(
                 f"{train_name}: Noch nicht angekommen. "
-                f"Geplant {format_time(planned_arrival)}, prognostiziert {format_time(actual_arrival)}."
+                f"Geplant {format_time(planned_arrival)}, "
+                f"prognostiziert {format_time(actual_arrival)}."
             )
             continue
 
-        delay_minutes = round((actual_arrival - planned_arrival).total_seconds() / 60)
+        delay_minutes = round(
+            (actual_arrival_local - planned_arrival_local).total_seconds() / 60
+        )
 
         if delay_minutes <= THRESHOLD_MINUTES:
+            print(
+                f"{train_name}: Angekommen, aber nur {delay_minutes} Minuten verspätet. "
+                f"Geplant {format_time(planned_arrival)}, "
+                f"tatsächlich {format_time(actual_arrival)}."
+            )
             continue
 
         notification_id = build_notification_id(arrival, check)
